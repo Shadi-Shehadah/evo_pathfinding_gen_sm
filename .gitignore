@@ -14,5 +14,5 @@ venv/
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints/
 
-# Data outputs (optional, if files are huge)
+# Data outputs
 output/
