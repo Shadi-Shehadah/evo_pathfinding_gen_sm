@@ -1,0 +1,18 @@
+[project]
+name = "gen_design_sheet_metal"
+version = "0.0"
+authors = [
+    { name = "Shadi Shehadah", email = "Shadi.Shehadah@gmail.com" }
+]
+readme = "README.md"
+
+dependencies = [
+    "numpy",
+    "matplotlib",
+    "scipy",
+    "networkx",
+    "shapely"
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
