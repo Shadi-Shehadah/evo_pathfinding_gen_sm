@@ -1,5 +1,5 @@
 [project]
-name = "gen_design_sheet_metal"
+name = "evo_pathfinding_gen_sm"
 version = "0.0"
 authors = [
     { name = "Shadi Shehadah", email = "Shadi.Shehadah@gmail.com" }
@@ -14,5 +14,11 @@ dependencies = [
     "shapely"
 ]
 
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["."]
+include = ["src*"]

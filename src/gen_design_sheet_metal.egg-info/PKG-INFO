@@ -1,0 +1,15 @@
+Metadata-Version: 2.4
+Name: gen_design_sheet_metal
+Version: 0.0
+Author-email: Shadi Shehadah <Shadi.Shehadah@gmail.com>
+Description-Content-Type: text/markdown
+License-File: LICENSE.md
+Requires-Dist: numpy
+Requires-Dist: matplotlib
+Requires-Dist: scipy
+Requires-Dist: networkx
+Requires-Dist: shapely
+Dynamic: license-file
+
+This project is still in its very early stages
+proper documentation coming soon...
