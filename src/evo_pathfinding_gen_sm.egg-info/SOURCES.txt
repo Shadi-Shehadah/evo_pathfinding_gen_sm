@@ -1,10 +1,14 @@
 LICENSE.md
 README.md
 pyproject.toml
+src/evo_pathfinding_gen_sm/__init__.py
+src/evo_pathfinding_gen_sm/__main__.py
+src/evo_pathfinding_gen_sm/geometry.py
 src/evo_pathfinding_gen_sm.egg-info/PKG-INFO
 src/evo_pathfinding_gen_sm.egg-info/SOURCES.txt
 src/evo_pathfinding_gen_sm.egg-info/dependency_links.txt
 src/evo_pathfinding_gen_sm.egg-info/requires.txt
 src/evo_pathfinding_gen_sm.egg-info/top_level.txt
-src/genetic_algorithm/genetic_code.py
-src/utils/renderer.py
+src/evo_pathfinding_gen_sm/genetic_algorithm/genetic_code.py
+src/evo_pathfinding_gen_sm/pathfinding/grid_pathfinder.py
+src/evo_pathfinding_gen_sm/utils/renderer.py
