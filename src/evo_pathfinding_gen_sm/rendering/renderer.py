@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
 import shapely.plotting as plotting
 import shapely 
 
@@ -9,24 +10,47 @@ from evo_pathfinding_gen_sm.geometry import Environment
 from evo_pathfinding_gen_sm.genetic_algorithm.genetic_code import Phenotype, Genotype, VectorField
 
 
-def render_environment(env: Environment):
+def render_environment(env: Environment, path: list = None):
 
-    fig,ax = plt.subplots()
+    fig, ax = plt.subplots(figsize=(10, 10))
+
     ax.add_patch(plotting.patch_from_polygon(env.total_area, facecolor='lightgrey', edgecolor='black', alpha=0.5))
     ax.add_patch(plotting.patch_from_polygon(env.obstacles, facecolor='darkgrey', edgecolor='black', alpha=0.8))
     ax.add_patch(plotting.patch_from_polygon(env.free_area, facecolor='lightgreen', edgecolor='black', alpha=0.3))
 
-    if env.grid.nodes:
-        xs = [p.x for p in env.grid.nodes]
-        ys = [p.y for p in env.grid.nodes]
+
+    if env.grid.graph.number_of_edges() > 0:
+        edge_segments = []
+        # The graph edges are tuples of Shapely Points: (point_a, point_b)
+        for u, v in env.grid.graph.edges():
+            edge_segments.append([(u.x, u.y), (v.x, v.y)])
         
-        ax.scatter(xs, ys, color='red', s=1, alpha=0.3, label='Grid Nodes')
+        # Create a single collection for all lines
+        lc = LineCollection(edge_segments, colors='gray', linewidths=0.5, alpha=0.3)
+        ax.add_collection(lc)
+
+
+    if env.grid.graph.nodes:
+        xs = [p.x for p in env.grid.graph.nodes]
+        ys = [p.y for p in env.grid.graph.nodes]
+        
+        ax.scatter(xs, ys, color='red', s=0.1, alpha=0.3, label='Grid Nodes')
 
 
     plotting.plot_line(env.mount1.plate, color='blue', linewidth=3)
     plotting.plot_line(env.mount2.plate, color='green', linewidth=3)
     
 
+    #if env.start_point:
+     #   ax.plot(env.start_point.x, env.start_point.y, marker='o', color='cyan', markersize=10, label='Start Point')
+#
+ #   if env.target_point:
+  #      ax.plot(env.target_point.x, env.target_point.y, marker='*', color='magenta', markersize=12, label='Target Point')
+    
+    if path and len(path) > 1:
+        path_x = [p.x for p in path]
+        path_y = [p.y for p in path]
+        ax.plot(path_x, path_y, color='orange', linewidth=2, label='Path')
 
 
     

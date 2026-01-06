@@ -1,6 +1,6 @@
 [project]
 name = "evo_pathfinding_gen_sm"
-version = "0.0"
+version = "0.1"
 authors = [
     { name = "Shadi Shehadah", email = "Shadi.Shehadah@gmail.com" }
 ]
@@ -12,6 +12,7 @@ dependencies = [
     "scipy",
     "networkx",
     "shapely"
+    "PyYAML",
 ]
 
 
