@@ -131,13 +131,6 @@ class Blob:
         self.strength = strength
 
 
-class Bend:
-    def __init__(self,position,direction,previous,following):
-        self.position = position
-        self.direction = direction
-        self.previous = previous
-        self.following = following
-
 
 def fillet_linestring(base_linestring,radius):
     pass

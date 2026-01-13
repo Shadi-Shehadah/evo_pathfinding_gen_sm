@@ -4,9 +4,29 @@ from dataclasses import dataclass
 from evo_pathfinding_gen_sm.geometry import Blob
 
 class Genotype:
-    def __init__(self,blobs):
-        self.blobs = blobs
+    def __init__(self, bends, weights = []):
+        if weights == []:
+            weights = np.ones(len(bends))
+
+        self.blobs = np.hstack(bends,weights)
     
+
+    def get_field_value(self, x, y):
+        """Calculates the scalar intensity at (x,y)"""
+        total_value = 0.0
+        for blob in self.blobs:
+            dx = x - blob.x
+            dy = y - blob.y
+            dist_sq = dx*dx + dy*dy
+            
+            # Gaussian formula: strength * e^(-dist^2 / 2r^2)
+            # This creates a smooth bell curve
+            weight = blob.strength * np.exp(-dist_sq / (2 * blob.radius**2))
+            total_value += weight
+            
+        return total_value
+
+
     def get_field_value_vectorized(self, X_mesh, Y_mesh):
         """
         Calculates field intensity for massive grids using NumPy broadcasting.
@@ -30,13 +50,35 @@ class Genotype:
         return total_field
 
 
+    def get_flow_cost(self, x, y, move_dx, move_dy):
+        """
+        Calculates directional cost.
+        If moving WITH the gradient (downhill), cost is low.
+        If moving AGAINST the gradient (uphill), cost is high.
+        """
+        # (Optional) Calculate gradient of the field roughly
+        eps = 0.1
+        val_x = self.get_field_value(x + eps, y) - self.get_field_value(x - eps, y)
+        val_y = self.get_field_value(x, y + eps) - self.get_field_value(x, y - eps)
+        
+        # Dot product: Are we moving in the direction of the slope?
+        alignment = (val_x * move_dx) + (val_y * move_dy)
+        
+        # If alignment is positive (uphill), penalty. If negative (downhill), bonus.
+        return alignment * 5.0 # Weight factor
+
+
+
+
+
+
+
 
 class Phenotype:
     def __init__(self,bends):
         self.bends = bends
-    
-    def add_bend(self,bend):
-        self.bends.append(bend)
+
+
 
     
 class VectorField:

@@ -1,0 +1,26 @@
+
+
+material_properties:
+  segment_elastic_modulus: 0  # in  N / mm^2
+  bend_elastic_modulus: 0     # in  N / mm*2
+  thickness: 0.2        # in mm
+  width: 0              # in mm
+
+design_rules:
+  min_flange_length: 5  # in mm
+  max_flange_length: 60 # in mm
+  min_bend_angle: 35    # in degrees
+
+
+prm:
+  prm_bend_weight: 10          # as opposed to 1 for length
+  genotype_sensitivity:  0.5   # from 0.0 (irrelevant) to 1.0 (dominating)
+
+
+#grid-based:
+  #WIP
+
+
+
+#plotting:
+ #WIP
