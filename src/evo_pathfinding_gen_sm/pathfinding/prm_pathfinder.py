@@ -4,8 +4,7 @@ import networkx as nx
 import heapq
 import yaml
 
-# Assuming these imports match your project structure
-from evo_pathfinding_gen_sm.genetic_algorithm.genetic_code import Genotype
+from evo_pathfinding_gen_sm.genetic_algorithm.genetic_code import Genotype, Phenotype
 from evo_pathfinding_gen_sm.geometry import Environment
 
 with open("../config/config.yaml",'r') as f:
@@ -13,6 +12,7 @@ with open("../config/config.yaml",'r') as f:
 design_rules = cfg['design_rules']
 material_properties = cfg['material_properties']
 prm_cfg = cfg['prm']
+rng = np.random.default_rng()
 
 
 class PRMPathfinder:
@@ -32,6 +32,8 @@ class PRMPathfinder:
 
         self.genotype_sensitivity = prm_cfg['genotype_sensitivity']
         self.bend_weight = prm_cfg['prm_bend_weight']
+        self.genetic_weight = prm_cfg['prm_genetic_weight']
+
 
         # Heap must store tuples: (f_score, node)
         self.open_set = [] 
@@ -39,25 +41,26 @@ class PRMPathfinder:
 
 
 
-    def add_nodes(self, count=1, sampling_mode='random', max_attempts=100, coordinates=None, genotype: Genotype = None):
+    def add_nodes(self, count=1, sampling_mode='random', max_failed_attempts=100, coordinates=None, genotype: Genotype = None):
         added_nodes = []
         attempts = 0
+        max_attempts = max_failed_attempts + count
         while len(added_nodes) < count and attempts < max_attempts:
 
             
             if sampling_mode == 'random':
                 minx, miny, maxx, maxy = self.environment.free_area.bounds
-                point = shapely.geometry.Point(np.random.uniform(minx, maxx), np.random.uniform(miny, maxy))
+                point = shapely.geometry.Point(rng.uniform(minx, maxx), rng.uniform(miny, maxy))
             
             elif sampling_mode == 'genotype':
                 minx, miny, maxx, maxy = self.environment.free_area.bounds
-                point = shapely.geometry.Point(np.random.uniform(minx, maxx), np.random.uniform(miny, maxy))
+                point = shapely.geometry.Point(rng.uniform(minx, maxx), rng.uniform(miny, maxy))
 
                 field_val = genotype.get_field_value(point.x, point.y)
 
                 prob_accept = 1.0 / (1.0 + np.exp(self.genotype_sensitivity * field_val))
 
-                if np.random.random.uniform(0,1) > prob_accept:
+                if rng.uniform(0,1) > prob_accept:
                     attempts += 1
                     continue
             
@@ -65,7 +68,6 @@ class PRMPathfinder:
 
 
             if self.environment.free_area.contains(point):
-                # Initialize 'bends' count to 0
                 self.graph.add_node(point, pos=(point.x, point.y), target=False, start=False, 
                                     g=float('inf'), h=0, f=float('inf'), 
                                     parent=None, bends=0) 
@@ -107,8 +109,9 @@ class PRMPathfinder:
 
 
 
-    def build_roadmap(self, sampling_mode='random', connection_mode='nearestn', n=5000, node_count=100, radius=80):
-        nodes = self.add_nodes(count=node_count, sampling_mode=sampling_mode)
+    def build_roadmap(self, sampling_mode='random', connection_mode='all', n=500, node_count=1000, radius=80,genotype = None):
+        self.reset_pathfinder()
+        nodes = self.add_nodes(count=node_count, sampling_mode=sampling_mode, genotype=genotype)
         nodes.append(self.start_point)
         nodes.append(self.target_point)
         
@@ -150,7 +153,7 @@ class PRMPathfinder:
 
 
 
-    def find_path(self, start_point, target_point):
+    def find_path(self, start_point, target_point,parent_genotype = None):
         # 1. Reset costs for a fresh search
         for node in self.graph.nodes:
             self.graph.nodes[node]["g"] = float('inf')
@@ -185,7 +188,7 @@ class PRMPathfinder:
                 if self.validate_node(parent_of_current, current_node, neighbor):
                     
                     # Calculate new costs
-                    new_g, new_bends = self.calculate_g_and_bends(parent_of_current, current_node, neighbor)
+                    new_g, new_bends = self.calculate_g_and_bends(parent_of_current, current_node, neighbor,genotype=parent_genotype)
                     
                     if new_g < self.graph.nodes[neighbor]["g"]:
                         self.graph.nodes[neighbor]["g"] = new_g
@@ -222,6 +225,7 @@ class PRMPathfinder:
 
 
 
+
     def update_h_cost(self):
         for node in self.graph.nodes():
             self.graph.nodes[node]["h"] = node.distance(self.target_point)
@@ -229,12 +233,18 @@ class PRMPathfinder:
 
 
 
-    def calculate_g_and_bends(self, parent, current, neighbor):
+    def calculate_g_and_bends(self, parent, current, neighbor,genotype = None):
         
         # 1. Distance Cost
         dist = current.distance(neighbor)
         
-        # 2. Bend Cost
+        # 2. Parental Alignment cost:
+        genetic_cost = 0
+        if genotype:
+            genetic_cost = 1  #WIP
+
+
+        # 3. Bend Cost
         # Retrieve cumulative bends from current node
         current_bends = self.graph.nodes[current]["bends"]
         is_bend = False
@@ -254,7 +264,7 @@ class PRMPathfinder:
         new_bends = current_bends + (1 if is_bend else 0)
         
         # Total G
-        new_g = self.graph.nodes[current]["g"] + (dist) + ( (1 if is_bend else 0) * self.bend_weight)
+        new_g = self.graph.nodes[current]["g"] + (dist) + ( (1 if is_bend else 0) * self.bend_weight)  + genetic_cost * self.genetic_weight
         
         return new_g, new_bends
 
@@ -324,7 +334,7 @@ class PRMPathfinder:
                 parent = self.graph.nodes[cursor]["parent"]
                 
                 # Stop if we reached the start
-                if parent is None:
+                if parent is None or parent == cursor:
                     break
                 
                 if skip_check:
@@ -352,3 +362,12 @@ class PRMPathfinder:
                 cursor = parent
                 
             return True
+    
+    def reset_pathfinder(self):
+        self.graph.clear()
+        self.path = []
+
+    def get_phenotype_from_genotype(self, genotype: Genotype):
+        self.build_roadmap(node_count=100, genotype=genotype)
+        self.find_path(self.start_point, self.target_point, parent_genotype=genotype)
+        return Phenotype(self.environment, self.path)

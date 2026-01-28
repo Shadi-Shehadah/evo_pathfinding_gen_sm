@@ -1,15 +1,34 @@
 import shapely
 import numpy as np
 from dataclasses import dataclass
-from evo_pathfinding_gen_sm.geometry import Blob
+from evo_pathfinding_gen_sm.geometry import Blob, Environment
+import yaml
+
+with open("../config/config.yaml",'r') as f:
+    cfg = yaml.load(f, Loader=yaml.FullLoader)
+material_properties = cfg['material_properties']
+genetic_cfg = cfg['genetic_algorithm']
+
+
 
 class Genotype:
     def __init__(self, bends, weights = []):
+        self.vector_field = VectorField(bends)
+        radius = genetic_cfg['blob_radius']
         if weights == []:
-            weights = np.ones(len(bends))
+            weights = np.ones(len(bends)) * -1
 
-        self.blobs = np.hstack(bends,weights)
+        self.blobs = []
+        for i in range(len(bends)):
+            self.blobs.append(Blob(bends[i].x,bends[i].y,radius,weights[i]))
+
     
+    def update_vector_field(self):
+        bends = []
+        for blob in self.blobs:
+            bends.append(shapely.geometry.Point(blob.x,blob.y))
+        
+        self.vector_field = VectorField(bends)
 
     def get_field_value(self, x, y):
         """Calculates the scalar intensity at (x,y)"""
@@ -75,27 +94,56 @@ class Genotype:
 
 
 class Phenotype:
-    def __init__(self,bends):
-        self.bends = bends
+    def __init__(self,environment: Environment, nodes):
+        self.nodes = nodes
+        self.start = nodes[0]
+        self.target = nodes[len(nodes) - 1]
+        self.bends = nodes[ 1: (len(nodes)-1) ]
+        self.genotype = Genotype(self.bends)
+        self.age = 0
+        self.fitness = 0
+
+        self.mass = self.find_mass()
+    
+    def find_mass(self):
+        width = material_properties['width']
+        thickness = material_properties['thickness']
+        density = material_properties['density']
+
+        length = 0
+
+        for i in range(1,len(self.nodes)):
+            length += self.nodes[i].distance(self.nodes[i-1])
+        
+        return length * width * thickness  * density
+
+
+    def get_nodes_with_complex_bends():
+        nodes = []
+        joint_gap = 0.1
+        
+
+
+
 
 
 
     
 class VectorField:
-    def __init__(self, phenotype, field_width=2.0):
+    def __init__(self, bends, field_width=2.0):
         """
         field_width (sigma): How 'wide' the influence of the path is.
         """
+        self.bends = bends
         self.segments = []
         self.vectors = []
         self.sigma_sq = field_width ** 2
         
         # 1. Pre-calculate segments and their direction vectors
-        # Assuming phenotype.bends is a list of Bend objects in order
-        if len(phenotype.bends) > 1:
-            for i in range(len(phenotype.bends) - 1):
-                p1 = phenotype.bends[i].position
-                p2 = phenotype.bends[i+1].position
+        if len(self.bends) > 1:
+            for i in range(len(self.bends) - 1):
+                p1 = self.bends[i]
+                p2 = self.bends[i+1]
                 
                 # Create Shapely line for easy distance checks
                 segment = shapely.geometry.LineString([p1, p2])

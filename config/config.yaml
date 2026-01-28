@@ -1,10 +1,10 @@
 
 
 material_properties:
-  segment_elastic_modulus: 0  # in  N / mm^2
-  bend_elastic_modulus: 0     # in  N / mm*2
+  segment_elastic_modulus: 200  # in  GPA
   thickness: 0.2        # in mm
-  width: 0              # in mm
+  width: 80              # in mm
+  density: 0.000008      # in kg/mm^3
 
 design_rules:
   min_flange_length: 5  # in mm
@@ -14,12 +14,26 @@ design_rules:
 
 prm:
   prm_bend_weight: 10          # as opposed to 1 for length
-  genotype_sensitivity:  0.5   # from 0.0 (irrelevant) to 1.0 (dominating)
+  prm_genetic_weight: 10       # as opposed to 1 for length
+  genotype_sensitivity:  8   # from 0.0 (irrelevant) to 1.0 (dominating)
 
 
 #grid-based:
   #WIP
 
+
+fitness:
+  bend_cost: 1             # unitless cost per bend
+  mass_cost: 100             # unitless cost per kg
+  deflection_cost: 100000  # unitless cost per m deflection
+
+
+genetic_algorithm:
+  blob_radius: 3        # mm
+  mutation_distance: 3  # mm
+  crossover_rate: 0.2
+  mutation_rate: 0.7
+  max_age: 6  # generations
 
 
 #plotting:

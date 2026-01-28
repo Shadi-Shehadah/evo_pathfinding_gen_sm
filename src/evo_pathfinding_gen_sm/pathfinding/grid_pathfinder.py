@@ -1,262 +1,454 @@
 import numpy as np
-import shapely.geometry
+import shapely 
 import networkx as nx
 import heapq
+import yaml
 
-from evo_pathfinding_gen_sm.genetic_algorithm.genetic_code import Genotype
+from evo_pathfinding_gen_sm.genetic_algorithm.genetic_code import Genotype, Phenotype
 from evo_pathfinding_gen_sm.geometry import Environment
+
+with open("../config/config.yaml",'r') as f:
+    cfg = yaml.load(f, Loader=yaml.FullLoader)
+design_rules = cfg['design_rules']
+material_properties = cfg['material_properties']
+rng = np.random.default_rng()
+
 
 class GridPathfinder:
     def __init__(self, environment: Environment, genotype: Genotype = None):
         self.environment = environment
+        self.path = []
         self.grid = environment.grid
-        self.graph = environment.grid.graph
+        self.graph = self.grid.graph
         self.start_point = environment.start_point
         self.target_point = environment.target_point
-        self.path = []
-        
-        # Constraints
-        self.minimum_flange_length = 5.0
-        self.maximum_flange_length = 60.0
-        self.min_bend_angle = 35.0 # Degrees
+
+        self.min_flange_length = design_rules['min_flange_length']
+        self.max_flange_length = design_rules['max_flange_length']
+        self.min_bend_angle = design_rules['min_bend_angle']
+
+
+
+
+        self.sheet_thickness = material_properties['thickness']
+
+
+        self.genetic_weight = 1
+        self.bend_weight = 1
 
         # Priority Queue: Stores (f_cost, tie_breaker, node_object)
         self.open_set = []
         self.closed_set = set()
         self.counter = 0 # Unique ID for tie-breaking
 
-    def find_path(self, start_point, target_point):
-        # --- DEBUG START ---
-        if start_point not in self.graph:
-            print(f"CRITICAL ERROR: Start Node {start_point} is NOT in the graph!")
-            return []
-        
-        degree = self.graph.degree[start_point]
-        print(f"DEBUG: Start Node Degree: {degree}")
-        if degree == 0:
-            print("FAILURE: Start Node is isolated (0 neighbors). Connect it to the grid!")
-            return []
-        # --- DEBUG END ---
 
-        
-        # 1. Reset Graph Costs
+
+
+
+
+
+    def find_path(self, start_point, target_point,parent_genotype = None):
+        # 1. Reset costs for a fresh search
         for node in self.graph.nodes:
             self.graph.nodes[node]["g"] = float('inf')
             self.graph.nodes[node]["f"] = float('inf')
             self.graph.nodes[node]["parent"] = None
+            self.graph.nodes[node]["bends"] = 0
 
-        # 2. Initialize Start
         self.graph.nodes[start_point]["g"] = 0
-        self.graph.nodes[start_point]["h"] = start_point.distance(target_point)
-        self.graph.nodes[start_point]["f"] = self.graph.nodes[start_point]["h"]
-        self.graph.nodes[start_point]["parent"] = start_point # Start is its own parent (or None)
+        self.graph.nodes[start_point]["bends"] = 0 
+        self.graph.nodes[start_point]["parent"] = start_point
 
-        self.push_to_open(start_point, self.graph.nodes[start_point]["f"])
+        self.update_h_cost(parent_genotype)
+        
+        self.open_set = []
+
+        
+        # Push Tuple: (f_score, node)
+# FIX 2: Use a counter for tie-breaking
+        # Tuple structure: (f_score, unique_counter, node_object)
+        self.counter = 0 
+        heapq.heappush(self.open_set, (0, self.counter, start_point))
+        self.counter += 1
+
         self.closed_set = set()
 
-        # 3. Main Loop
         while self.open_set:
             current_f, _, current_node = heapq.heappop(self.open_set)
 
             if current_node == target_point:
-                return self.reconstruct_path(current_node)
+            # Final Validation: Is the last segment long enough?
+                parent = self.graph.nodes[target_point]["parent"]
+                final_segment_len = parent.distance(target_point)
+    
+                if final_segment_len < self.min_flange_length:
+            # Path invalid: Ended with a tiny stump. 
+            # Don't break; continue searching for a better path.
+                    continue 
+        
+                break # Path found and Valid!
+
 
             if current_node in self.closed_set:
                 continue
             self.closed_set.add(current_node)
 
-            # Explore Neighbors
+            # Get references for the "Standard" path
+            parent_node = self.graph.nodes[current_node]["parent"]
+            
+            # Get references for the "Shortcut" path (Theta*)
+            # The "Grandparent" is needed to check the angle at the Parent if we skip Current
+            grandparent_node = None
+            if parent_node is not None:
+                grandparent_node = self.graph.nodes[parent_node]["parent"]
+
             for neighbor in self.graph.neighbors(current_node):
                 if neighbor in self.closed_set:
                     continue
                 
-                # --- THETA* LOGIC ---
-                self.update_vertex(current_node, neighbor)
-
-        print("No path found.")
-        return []
-
-    def update_vertex(self, current, neighbor):
-        """
-        The Core Theta* Logic:
-        Try to connect Parent(Current) -> Neighbor (Shortcut).
-        If invalid, connect Current -> Neighbor (Standard A*).
-        """
-        parent = self.graph.nodes[current]["parent"]
-        
-        # Path 1: The Shortcut (Parent -> Neighbor)
-        # We can only shortcut if we have a real parent (not start) AND line of sight
-        if parent is not None and parent != current and self.line_of_sight(parent, neighbor):
-            
-            # Validating Constraints for the LONG segment (Parent -> Neighbor)
-            if self.is_valid_move(self.graph.nodes[parent]["parent"], parent, neighbor):
+                # --- PATH 1: THETA* SHORTCUT (Try connecting Parent -> Neighbor) ---
+                # Conditions: 
+                # 1. We have a parent (can't shortcut from start).
+                # 2. Line of Sight exists between Parent and Neighbor.
+                # 3. The bend at Parent is valid (using Grandparent -> Parent -> Neighbor).
+                shortcut_success = False
                 
-                new_g = self.graph.nodes[parent]["g"] + parent.distance(neighbor)
-                
-                if new_g < self.graph.nodes[neighbor]["g"]:
-                    self.graph.nodes[neighbor]["g"] = new_g
-                    self.graph.nodes[neighbor]["parent"] = parent # Skip 'current'!
-                    self.update_f_score(neighbor)
-                    self.push_to_open(neighbor, self.graph.nodes[neighbor]["f"])
-                return # If shortcut worked, we are done with this node for now
+                if parent_node is not None and parent_node != current_node:
+                     if self.environment.line_of_sight(parent_node, neighbor):
+                        if self.validate_node(grandparent_node, parent_node, neighbor):
+                            
+                            # Calculate cost from PARENT, skipping current
+                            # Note: pass 'parent_node' as current to your cost function effectively
+                            new_g, new_bends = self.calculate_g_and_bends(
+                                grandparent_node, parent_node, neighbor, genotype=parent_genotype
+                            )
+                            
+                            if new_g < self.graph.nodes[neighbor]["g"]:
+                                self.graph.nodes[neighbor]["g"] = new_g
+                                self.graph.nodes[neighbor]["h"] = neighbor.distance(target_point)
+                                self.graph.nodes[neighbor]["f"] = new_g + self.graph.nodes[neighbor]["h"]
+                                self.graph.nodes[neighbor]["parent"] = parent_node # Point to Parent!
+                                self.graph.nodes[neighbor]["bends"] = new_bends
+                                
+                                heapq.heappush(self.open_set, (self.graph.nodes[neighbor]["f"], self.counter, neighbor))
+                                self.counter += 1
+                                shortcut_success = True
 
-        # Path 2: Standard A* (Current -> Neighbor)
-        # We fall back to this if LOS is blocked OR if the shortcut violated constraints
-        if self.is_valid_move(parent, current, neighbor):
+                # --- PATH 2: STANDARD A* (Connect Current -> Neighbor) ---
+                # Only runs if shortcut failed or wasn't possible
+                if not shortcut_success:
+                    if self.validate_node(parent_node, current_node, neighbor):
+                        
+                        new_g, new_bends = self.calculate_g_and_bends(
+                            parent_node, current_node, neighbor, genotype=parent_genotype
+                        )
+                        
+                        if new_g < self.graph.nodes[neighbor]["g"]:
+                            self.graph.nodes[neighbor]["g"] = new_g
+                            self.graph.nodes[neighbor]["h"] = neighbor.distance(target_point)
+                            self.graph.nodes[neighbor]["f"] = new_g + self.graph.nodes[neighbor]["h"]
+                            self.graph.nodes[neighbor]["parent"] = current_node # Point to Current
+                            self.graph.nodes[neighbor]["bends"] = new_bends
+                            
+                            heapq.heappush(self.open_set, (self.graph.nodes[neighbor]["f"], self.counter, neighbor))
+                            self.counter += 1
             
-            new_g = self.graph.nodes[current]["g"] + current.distance(neighbor)
-            
-            if new_g < self.graph.nodes[neighbor]["g"]:
-                self.graph.nodes[neighbor]["g"] = new_g
-                self.graph.nodes[neighbor]["parent"] = current
-                self.update_f_score(neighbor)
-                self.push_to_open(neighbor, self.graph.nodes[neighbor]["f"])
 
-    def is_valid_move(self, grandparent, parent, child):
-            """
-            Checks Sheet Metal Constraints.
-            Allows short segments only if they are collinear (building a flange).
-            """
-            # 1. Calculate Distances and Angles
-            dist = parent.distance(child)
-            
-            # Calculate angle (default to 0 if no grandparent)
-            angle = 0.0
-            if grandparent is not None and grandparent != parent:
-                angle = self.calculate_bend_angle(grandparent, parent, child)
 
-            # --- RULE 1: MINIMUM FLANGE LENGTH ---
-            # We enforce length ONLY if we are making a turn.
-            # If we are going straight (angle ~ 0), we allow short segments 
-            # because we might be in the middle of "growing" a valid flange.
-            
-            is_turning = angle > 1.0 # Tolerance for floating point
-            is_starting = (grandparent is None) # First step from start
-            
-            if is_turning:
-                # If we turn, the PREVIOUS segment (Grandparent->Parent) must have been long enough.
-                # But here we are checking the NEW segment (Parent->Child).
-                # Sheet metal rule: You can't put a bend too close to the previous bend.
-                # So, strictly speaking, dist(Parent, Child) doesn't need to be > 5.0 YET,
-                # but the segment BEFORE the turn must be.
-                
-                # However, for pathfinding step validation:
-                # We usually reject a turn if the *current* segment is tiny, 
-                # unless you want to allow "turn, move 1mm, turn" (which is invalid).
-                pass 
-            
-            # CORRECT LOGIC for Grid Expansion:
-            # A segment is valid if:
-            # A) It meets the length requirement OR
-            # B) It is straight (Angle ~ 0) (We are extending a flange) OR
-            # C) It is the very first move (We are starting a flange)
-            
-            if dist < self.minimum_flange_length:
-                if is_turning and not is_starting:
-                    return False # Cannot turn if the segment is too short!
-                # If straight or starting, we ALLOW it (return True at the end)
 
-            if dist > self.maximum_flange_length:
-                return False
-
-            # --- RULE 2: BEND ANGLE ---
-            # If we ARE turning, the angle must be sufficient.
-            if is_turning:
-                if angle < self.min_bend_angle:
-                    return False
-            
-            return True
-
-    def line_of_sight(self, p1, p2):
-        line = shapely.geometry.LineString([p1, p2])
-        # Use a tiny buffer to avoid grazing touches being counted as collisions
-        # or simply check if it intersects the INTERIOR of obstacles.
-        # Ideally: return not self.environment.blocked_area.intersects(line)
-        # If that fails, try:
-        return not self.environment.obstacles.intersects(line)
-
-    def calculate_bend_angle(self, p_prev, p_curr, p_next):
-        """ Returns deviation from straight line in degrees (0 to 180) """
-        v1 = np.array([p_curr.x - p_prev.x, p_curr.y - p_prev.y])
-        v2 = np.array([p_next.x - p_curr.x, p_next.y - p_curr.y])
-        
-        norm1 = np.linalg.norm(v1)
-        norm2 = np.linalg.norm(v2)
-        if norm1 == 0 or norm2 == 0: return 0.0
-        
-        # Dot product angle
-        dot = np.dot(v1, v2)
-        cos_theta = np.clip(dot / (norm1 * norm2), -1.0, 1.0)
-        angle = np.degrees(np.arccos(cos_theta))
-        return angle
-
-    def update_f_score(self, node):
-        self.graph.nodes[node]["h"] = node.distance(self.target_point)
-        self.graph.nodes[node]["f"] = self.graph.nodes[node]["g"] + self.graph.nodes[node]["h"]
-
-    def push_to_open(self, node, f_score):
-        # Tie-breaker counter ensures we never compare Point objects directly if f_scores are equal
-        self.counter += 1
-        heapq.heappush(self.open_set, (f_score, self.counter, node))
-
-    def reconstruct_path(self, current):
+        # Reconstruct path
         self.path = []
-        while current is not None:
-            self.path.append(current)
-            parent = self.graph.nodes[current]["parent"]
-            # Infinite loop protection
-            if parent == current: 
-                break
-            current = parent
         
+        if self.graph.nodes[target_point]["parent"] is None:
+            print("No path found")
+            return []
+
+        current = target_point
+        while current != start_point:
+            self.path.append(current)
+            current = self.graph.nodes[current]["parent"]
+            # Safety break
+            if current is None: 
+                print("Error in path reconstruction")
+                return []
+                
+        self.path.append(start_point)
         self.path.reverse()
         return self.path
 
+
+
+
+
+
+
+
+    def update_h_cost(self, genotype=None):
+            # Tuning Parameter:
+            # Increase this to make the pathfinder follow the genotype field more aggressively.
+            # Decrease to prioritize the shortest straight line.
+            genetic_weight = 10.0 
+
+            for node in self.graph.nodes():
+                # 1. Physical Distance (Euclidean)
+                dist_geom = node.distance(self.target_point)
+                
+                # 2. Genetic Cost
+                dist_genetic = 0.0
+                if genotype is not None:
+                    # Retrieve the field value at this node's coordinates
+                    # Assuming genotype.get_field_value(x, y) exists
+                    raw_val = genotype.get_field_value(node.x, node.y)
+                    dist_genetic = raw_val * genetic_weight
+
+                # 3. Combine
+                # Logic: 
+                # If raw_val is Negative (Valley), h decreases -> Node looks "closer" -> Explored sooner.
+                # If raw_val is Positive (Hill), h increases -> Node looks "farther" -> Avoided.
+                total_h = dist_geom + dist_genetic
+                
+                # Safety: A* heuristics generally shouldn't be negative.
+                self.graph.nodes[node]["h"] = max(0.0, total_h)
+
+
+
+
+
+    def calculate_g_and_bends(self, parent, current, neighbor, genotype=None):
+            
+            # 1. Distance Cost
+            dist = current.distance(neighbor)
+            
+            # 2. Parental Alignment Cost (Vector Field)
+            genetic_cost = 0.0
+            
+            if genotype is not None and hasattr(genotype, 'vector_field'):
+                # A. Calculate Move Vector (Normalized)
+                move_vec = np.array([neighbor.x - current.x, neighbor.y - current.y])
+                move_len = np.linalg.norm(move_vec)
+                
+                if move_len > 0:
+                    move_dir = move_vec / move_len
+                    
+                    # B. Get Field Vector at Current Location
+                    # Assuming vector_field is accessible by grid coordinates [y][x] or similar
+                    # We cast to int because grid indices must be integers
+                    try:
+                        ix, iy = int(current.x), int(current.y)
+                        # Shape check to prevent index errors
+                        if 0 <= iy < genotype.vector_field.shape[0] and 0 <= ix < genotype.vector_field.shape[1]:
+                            field_vec = genotype.vector_field[iy, ix] # Get vector (dx, dy)
+                            
+                            # Normalize field vector (if not already)
+                            field_len = np.linalg.norm(field_vec)
+                            
+                            if field_len > 0:
+                                field_dir = field_vec / field_len
+                                
+                                # C. Calculate Alignment (Dot Product)
+                                # 1.0 = Perfectly Aligned, -1.0 = Opposite, 0.0 = Perpendicular
+                                alignment = np.dot(move_dir, field_dir)
+                                
+                                # D. Convert to Cost
+                                # We want alignment (1.0) to be cheap (0.0 cost)
+                                # We want misalignment (-1.0) to be expensive (2.0 cost)
+                                # Formula: Cost = (1.0 - Alignment) / 2.0  -> Range [0.0, 1.0]
+                                genetic_cost = (1.0 - alignment) * dist # Scale by distance traveled
+                    except Exception as e:
+                        # Fallback if indices are out of bounds or field is missing
+                        pass
+
+            # 3. Bend Cost
+            # Retrieve cumulative bends from current node
+            current_bends = self.graph.nodes[current]["bends"]
+            is_bend = False
+            
+            if parent is not None and parent != current:
+                vec1 = np.array([current.x - parent.x, current.y - parent.y])
+                vec2 = np.array([neighbor.x - current.x, neighbor.y - current.y])
+                
+                angle_rad = np.arctan2(vec2[1], vec2[0]) - np.arctan2(vec1[1], vec1[0])
+                angle_deg = abs(np.degrees(angle_rad)) % 180
+                
+                # Using your tolerance or > 0
+                if angle_deg > self.min_bend_angle: 
+                    is_bend = True
+            
+            new_bends = current_bends + (1 if is_bend else 0)
+            
+            # 4. Total G
+            step_bend_cost = (self.bend_weight if is_bend else 0)
+            
+            new_g = self.graph.nodes[current]["g"] + dist + step_bend_cost + (genetic_cost * self.genetic_weight)
+            
+            return new_g, new_bends
+
+
+
+
+
+
+
+    def validate_node(self, parent, current, neighbor):
+        # 1. Start Node Case
+        if parent is None or parent == current:
+            return True
+
+        # 2. Calculate Angle
+        bend_angle = self.calculate_bend_angle(parent, current, neighbor)
+        
+        # 3. Classify Move (Drifting vs Turning)
+        is_going_straight = bend_angle < self.min_bend_angle 
+        
+        # --- CASE A: GOING STRAIGHT ---
+        if is_going_straight:
+            # Check Max Length (only strict rule for straight lines)
+            # Use backtracking to get the true length if you want to be strict,
+            # but usually immediate parent check is enough for A* to prune.
+            if parent.distance(neighbor) > self.max_flange_length:
+                return False
+            return True
+
+        # --- CASE B: TURNING ---
+        else:
+            # 1. Self-Collision (Always check)
+            if not self.check_self_collision(current, neighbor):
+                return False            
+
+            # 2. Standard Flange Length Check (For the rest of the path)
+            incoming_length = parent.distance(current)
+            
+            # Quick Check
+            if incoming_length >= self.min_flange_length:
+                return True 
+                
+            # Deep Check (Backtracking)
+            true_length = self.get_accumulated_length(current, parent)
+            
+            if true_length < self.min_flange_length:
+                return False # Too short, and not near an endpoint
+
+            return True
+        
+
+
+
+
+
     def check_self_collision(self, current_node, neighbor):
-        """
-        Returns False if the new segment (current->neighbor) collides 
-        with any part of the path history.
-        """
-        # 1. Define the segment we are trying to add
-        new_segment = shapely.geometry.LineString([current_node, neighbor])
-        
-        # Define a safety margin (e.g., thickness of your sheet metal)
-        # If segments get closer than this, it counts as a collision.
-        part_thickness = 1.0  # Adjust this to match your material
-        
-        # 2. Traverse backwards through the lineage
-        cursor = current_node
-        
-        # We skip the first iteration (immediate parent) because we are 
-        # connected to it, so intersection is guaranteed at the vertex.
-        skip_check = True 
-        
-        while True:
-            parent = self.graph.nodes[cursor]["parent"]
+            """
+            Returns False if the new segment (current->neighbor) collides 
+            with any part of the path history.
+            """
+            # 1. Define the segment we are trying to add
+            new_segment = shapely.geometry.LineString([current_node, neighbor])
             
-            # Stop if we reached the start
-            if parent is None:
+            # Define a safety margin (e.g., thickness of your sheet metal)
+            # If segments get closer than this, it counts as a collision.
+            part_thickness = self.sheet_thickness
+            
+            # 2. Traverse backwards through the lineage
+            cursor = current_node
+            
+            # We skip the first iteration (immediate parent) because we are 
+            # connected to it, so intersection is guaranteed at the vertex.
+            skip_check = True 
+            
+            while True:
+                parent = self.graph.nodes[cursor]["parent"]
+                
+                # Stop if we reached the start
+                if parent is None or parent == cursor:
+                    break
+                
+                if skip_check:
+                    skip_check = False
+                else:
+                    if new_segment.crosses(self.environment.mount1.plate) or new_segment.crosses(self.environment.mount2.plate):
+                        return False
+                    
+                    # 3. Create the historical segment
+                    old_segment = shapely.geometry.LineString([parent, cursor])
+                    
+                    # CHECK A: Do they cross strictly? (forming a loop)
+                    if new_segment.crosses(old_segment):
+                        # print(f"Self-Collision: Crossing detected at {cursor}")
+                        return False
+                    
+                    # CHECK B: Are they too close? (Parallel overlapping or tight folding)
+                    # We check distance > thickness. 
+                    # Note: distance() finds the shortest distance between two shapes.
+                    if new_segment.distance(old_segment) < part_thickness:
+                        # print(f"Self-Collision: Parts too close ({new_segment.distance(old_segment):.2f})")
+                        return False
+                
+                # Move backwards
+                cursor = parent
+                
+            return True
+
+
+
+
+    
+
+
+
+    def calculate_bend_angle(self, p_prev, p_curr, p_next):
+        """ Calculates the deviation angle in degrees (0=Straight, 90=Turn) """
+        v_in = np.array([p_curr.x - p_prev.x, p_curr.y - p_prev.y])
+        v_out = np.array([p_next.x - p_curr.x, p_next.y - p_curr.y])
+        
+        norm_in = np.linalg.norm(v_in)
+        norm_out = np.linalg.norm(v_out)
+        
+        if norm_in < 1e-9 or norm_out < 1e-9: return 0.0 # Treat as straight
+        
+        dot = np.dot(v_in, v_out)
+        cos_theta = np.clip(dot / (norm_in * norm_out), -1.0, 1.0)
+        return np.degrees(np.arccos(cos_theta))
+
+
+
+
+
+    def get_accumulated_length(self, current_node, parent_node):
+
+        total_length = current_node.distance(parent_node)
+        
+        # Cursors for backtracking
+        child = current_node
+        curr = parent_node
+        
+        # Look back up to 50 steps (approx 25mm, enough to satisfy min_flange)
+        for _ in range(50):
+            # 1. Get Predecessor
+            # Note: We must access the graph to find the history
+            if curr not in self.graph.nodes: break
+            pred = self.graph.nodes[curr]["parent"]
+            
+            # Stop if we hit Start or End of chain
+            if pred is None or pred == curr: 
                 break
+                
+            # 2. Check Alignment
+            # Is the segment (Pred -> Curr -> Child) straight?
+            angle = self.calculate_bend_angle(pred, curr, child)
             
-            if skip_check:
-                skip_check = False
+            # Using your 'Drifting Straight' tolerance
+            if angle < self.min_bend_angle: 
+                # It is effectively one line, add length and keep going back
+                total_length += curr.distance(pred)
+                child = curr
+                curr = pred
             else:
-                # 3. Create the historical segment
-                old_segment = shapely.geometry.LineString([parent, cursor])
+                # We hit a bend! The straight segment started here.
+                break
                 
-                # CHECK A: Do they cross strictly? (forming a loop)
-                if new_segment.crosses(old_segment):
-                    # print(f"Self-Collision: Crossing detected at {cursor}")
-                    return False
-                
-                # CHECK B: Are they too close? (Parallel overlapping or tight folding)
-                # We check distance > thickness. 
-                # Note: distance() finds the shortest distance between two shapes.
-                if new_segment.distance(old_segment) < part_thickness:
-                    # print(f"Self-Collision: Parts too close ({new_segment.distance(old_segment):.2f})")
-                    return False
-            
-            # Move backwards
-            cursor = parent
-            
-        return True
+        return total_length
+    
+
+
+    def get_phenotype_from_genotype(self, genotype: Genotype):
+        self.find_path(self.start_point, self.target_point, parent_genotype=genotype)
+        return Phenotype(self.environment, self.path)
