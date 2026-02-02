@@ -9,7 +9,6 @@ from evo_pathfinding_gen_sm.structural_simulator import StructuralSimulator
 with open("../config/config.yaml",'r') as f:
     cfg = yaml.load(f, Loader=yaml.FullLoader)
 fitness_cfg = cfg['fitness']
-print(fitness_cfg)
 
 
 

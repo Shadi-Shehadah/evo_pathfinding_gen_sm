@@ -11,6 +11,7 @@ with open("../config/config.yaml",'r') as f:
     cfg = yaml.load(f, Loader=yaml.FullLoader)
 design_rules = cfg['design_rules']
 material_properties = cfg['material_properties']
+pathfinding_cfg = cfg['grid-based']
 rng = np.random.default_rng()
 
 
@@ -27,7 +28,9 @@ class GridPathfinder:
         self.max_flange_length = design_rules['max_flange_length']
         self.min_bend_angle = design_rules['min_bend_angle']
 
-
+        self.genotype_sensitivity = pathfinding_cfg['genotype_sensitivity']
+        self.bend_weight = pathfinding_cfg['bend_weight']
+        self.genetic_weight = pathfinding_cfg['genetic_weight']
 
 
         self.sheet_thickness = material_properties['thickness']
@@ -187,7 +190,7 @@ class GridPathfinder:
             # Tuning Parameter:
             # Increase this to make the pathfinder follow the genotype field more aggressively.
             # Decrease to prioritize the shortest straight line.
-            genetic_weight = 10.0 
+            genetic_weight = self.genotype_sensitivity
 
             for node in self.graph.nodes():
                 # 1. Physical Distance (Euclidean)
@@ -205,7 +208,7 @@ class GridPathfinder:
                 # Logic: 
                 # If raw_val is Negative (Valley), h decreases -> Node looks "closer" -> Explored sooner.
                 # If raw_val is Positive (Hill), h increases -> Node looks "farther" -> Avoided.
-                total_h = dist_geom + dist_genetic
+                total_h = dist_geom + dist_genetic + 1000
                 
                 # Safety: A* heuristics generally shouldn't be negative.
                 self.graph.nodes[node]["h"] = max(0.0, total_h)
@@ -236,13 +239,13 @@ class GridPathfinder:
                     try:
                         ix, iy = int(current.x), int(current.y)
                         # Shape check to prevent index errors
-                        if 0 <= iy < genotype.vector_field.shape[0] and 0 <= ix < genotype.vector_field.shape[1]:
-                            field_vec = genotype.vector_field[iy, ix] # Get vector (dx, dy)
+                        
+                        field_vec = genotype.vector_field.get_vector_at(ix,iy) # Get vector (dx, dy)
                             
                             # Normalize field vector (if not already)
-                            field_len = np.linalg.norm(field_vec)
+                        field_len = np.linalg.norm(field_vec)
                             
-                            if field_len > 0:
+                        if field_len > 0:
                                 field_dir = field_vec / field_len
                                 
                                 # C. Calculate Alignment (Dot Product)
@@ -254,8 +257,14 @@ class GridPathfinder:
                                 # We want misalignment (-1.0) to be expensive (2.0 cost)
                                 # Formula: Cost = (1.0 - Alignment) / 2.0  -> Range [0.0, 1.0]
                                 genetic_cost = (1.0 - alignment) * dist # Scale by distance traveled
+                                #print(f"Genetic Cost at Node ({current.x}, {current.y}): {genetic_cost:.2f}")
+                        else:
+                                pass
+                                #print(f"Zero-length field vector at ({current.x}, {current.y})")
+                        
                     except Exception as e:
                         # Fallback if indices are out of bounds or field is missing
+                        #print(f"Error accessing vector field at ({current.x}, {current.y}): {e}")
                         pass
 
             # 3. Bend Cost
@@ -270,7 +279,6 @@ class GridPathfinder:
                 angle_rad = np.arctan2(vec2[1], vec2[0]) - np.arctan2(vec1[1], vec1[0])
                 angle_deg = abs(np.degrees(angle_rad)) % 180
                 
-                # Using your tolerance or > 0
                 if angle_deg > self.min_bend_angle: 
                     is_bend = True
             
@@ -280,7 +288,7 @@ class GridPathfinder:
             step_bend_cost = (self.bend_weight if is_bend else 0)
             
             new_g = self.graph.nodes[current]["g"] + dist + step_bend_cost + (genetic_cost * self.genetic_weight)
-            
+            #print(f"Calculating g for Neighbor ({neighbor.x}, {neighbor.y}): Dist={dist:.2f}, BendCost={step_bend_cost}, GeneticCost={genetic_cost:.2f}, TotalG={new_g:.2f}")
             return new_g, new_bends
 
 

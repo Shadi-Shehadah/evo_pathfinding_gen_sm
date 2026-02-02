@@ -1,6 +1,12 @@
 import shapely
 import numpy as np
 import networkx as nx
+import yaml
+
+with open("../config/config.yaml",'r') as f:
+    cfg = yaml.load(f, Loader=yaml.FullLoader)
+pathfinding_cfg = cfg['grid-based']
+design_cfg = cfg['design_rules']
 
 
 
@@ -11,14 +17,14 @@ class Environment:
         self.obstacles = shapely.geometry.MultiPolygon(obstacles)
         self.mount1 = mount1
         self.mount2 = mount2
-        self.blocked_area = shapely.buffer(self.obstacles,self.thickness/2)
+        self.blocked_area = shapely.buffer(self.obstacles,self.thickness/2 + design_cfg['clearance'])
         self.free_area = self.find_free_area()
 
 
         self.target_point=shapely.geometry.Point(mount2.plate.coords[0])
         self.start_point=shapely.geometry.Point(mount1.plate.coords[0])
 
-        self.grid = Grid(self.free_area, self.obstacles, thickness, self.target_point, self.start_point)
+        self.grid = Grid(self.free_area, self.obstacles, pathfinding_cfg['node_spacing'], self.target_point, self.start_point)
         
 
     def add_obstacle(self,obstacle):
@@ -102,6 +108,8 @@ class Grid:
 
             # add the added point to the graph
             graph.add_node(self.added_point, pos=(self.added_point.x, self.added_point.y), g=0, h= 10000, f= 10000, parent = None,bends = 0)
+            graph.add_node(self.fixed_point, pos=(self.added_point.x, self.added_point.y), g=0, h= 10000, f= 10000, parent = None,bends = 0)
+
 
             # mark the target point
             graph.nodes[self.fixed_point]['target'] = True

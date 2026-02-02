@@ -34,14 +34,12 @@ class Evolution_Manager():
         start_point = self.environment.start_point
         target_point = self.environment.target_point
         self.generations = []
-        if pathfinder_type == 'PRM':
-            self.pathfinder = PRMPathfinder(self.environment)
-        elif pathfinder_type == 'Grid':
-            self.pathfinder = GridPathfinder(self.environment)
+        self.pathfinder = PRMPathfinder(self.environment)
+        
 
         initial_generation = Generation([])
         while len(initial_generation.phenotypes) < population_size:
-            self.pathfinder.build_roadmap(node_count=50)
+            self.pathfinder.build_roadmap(node_count=genetic_cfg['prm_initial_nodes'])
             path = self.pathfinder.find_path(start_point, target_point)
             if path is not None and len(path) >= 2:
                 phenotype = Phenotype(self.environment,path)
@@ -50,16 +48,16 @@ class Evolution_Manager():
         initial_generation.update_fitnesses()
         self.generations.append(initial_generation)
         self.current_generation_index = 0
+        if pathfinder_type == 'Grid':
+            self.pathfinder = GridPathfinder(self.environment)
 
 
 
 
-    def new_generation(self,previous_generation: Generation, selection_type= 'roulette'):
-        print(previous_generation)
+    def new_generation(self,previous_generation: Generation, selection_type= 'roulette', population_size: int = None):
         selection_list = copy.deepcopy(previous_generation.phenotypes)
         ages = [phenotype.age for phenotype in selection_list]
         new_generation_phenotypes = []
-        print("previous generation length: " + str(len(previous_generation.phenotypes)))
 
 
         if selection_type == 'roulette' or selection_type == 'rank':
@@ -78,7 +76,12 @@ class Evolution_Manager():
 
   
 
-            while len(new_generation_phenotypes) < len(previous_generation.phenotypes):
+            while len(new_generation_phenotypes) < population_size:
+                if rng.random() > genetic_cfg['grid_based_probability']:
+                    self.pathfinder = PRMPathfinder(self.environment)
+                else:
+                    self.pathfinder = GridPathfinder(self.environment)
+                    
                 if rng.random() < genetic_cfg['crossover_rate']:
                     parent1 = np.searchsorted(cumulative_probabilities, rng.random())
                     parent2 = np.searchsorted(cumulative_probabilities, rng.random())
@@ -86,53 +89,66 @@ class Evolution_Manager():
                     child_genotype = uniform_crossover(selection_list[parent1].genotype, selection_list[parent2].genotype)
                     child_phenotype1 = self.pathfinder.get_phenotype_from_genotype(child_genotype[0])
                     child_phenotype2 = self.pathfinder.get_phenotype_from_genotype(child_genotype[1])
+                    if child_phenotype1 is None or child_phenotype2 is None:
+                        continue
                     new_generation_phenotypes.append(child_phenotype1)
                     new_generation_phenotypes.append(child_phenotype2)
                     
-                    print(f" Crossover between parents {parent1} and {parent2}")
+                    #print(f" Crossover between parents {parent1} and {parent2}")
 
                 elif rng.random() < genetic_cfg['mutation_rate']:
                     parent = selection_list[np.searchsorted(cumulative_probabilities, rng.random())].genotype
-                    if rng.binomial(1, 0.5):
+                    if rng.binomial(1, genetic_cfg['mutation_shift_probability']) == 1:
                         child_genotype = mutate_shift(parent)
                     else:
                         child_genotype = mutate_invert(parent)
 
                     child_phenotype = self.pathfinder.get_phenotype_from_genotype(child_genotype)
+                    if child_phenotype is None:
+                        continue
                     new_generation_phenotypes.append(child_phenotype)
-                    print(f" Mutation applied")
+                    #print(f" Mutation applied")
                 
                 # Else, directly copy a selected phenotype
                 else:
-                    print(" Selection without changes")
+                    
                     selected_index = np.searchsorted(cumulative_probabilities, rng.random())
                     selected_phenotype = copy.deepcopy(selection_list[selected_index])
                     selected_phenotype.age += 1
+                    #print(f" Direct copy of phenotype {selected_index} with age {selected_phenotype.age}")
                     if selected_phenotype.age > genetic_cfg['max_age']:
                         # If too old, reject
                         continue
                     new_generation_phenotypes.append(selected_phenotype)
+                for phenotype in new_generation_phenotypes:
+                    phenotype.fitness = find_fitness(phenotype)
+                    if phenotype.fitness < genetic_cfg['min_fitness_threshold']:
+                        new_generation_phenotypes.remove(phenotype)
+
         
         new_generation = Generation(new_generation_phenotypes)
         new_generation.update_fitnesses()
-        print("new generation length: " + str(len(new_generation.phenotypes)))
+        #print("new generation length: " + str(len(new_generation.phenotypes)))
         return new_generation
 
 
-    def run_evolution(self, generations_count: int, population_size: int, pathfinder_type: str, selection_type: str):
+    def run_evolution(self, generations_count: int, population_size: int, pathfinder_type: str, selection_type: str,fitness_offset: int=0):
         self.initialize(pathfinder_type, population_size)
         print(f"Generation {self.current_generation_index} completed.")
-        for i, phenotype in enumerate(self.generations[self.current_generation_index].phenotypes):
-            print(f" Phenotype {i} fitness: {phenotype.fitness}")
+        print(f" Best fitness: {self.generations[self.current_generation_index].best_phenotype.fitness + fitness_offset}")
+
+        #for i, phenotype in enumerate(self.generations[self.current_generation_index].phenotypes):
+            #print(f" Phenotype {i} fitness: {phenotype.fitness}")
 
         for _ in range(generations_count):
             previous_generation = self.generations[self.current_generation_index]
-            new_generation = self.new_generation(previous_generation=previous_generation, selection_type=selection_type)
+            new_generation = self.new_generation(previous_generation=previous_generation, selection_type=selection_type, population_size=population_size)
             self.generations.append(new_generation)
             self.current_generation_index += 1
             print(f"Generation {self.current_generation_index} completed.")
-            for i, phenotype in enumerate(self.generations[self.current_generation_index].phenotypes):
-                print(f" Phenotype {i} fitness: {phenotype.fitness}")
+            print(f" Best fitness: {new_generation.best_phenotype.fitness + fitness_offset}")
+            #for i, phenotype in enumerate(self.generations[self.current_generation_index].phenotypes):
+                #print(f" Phenotype {i} fitness: {phenotype.fitness}")
 
         
 

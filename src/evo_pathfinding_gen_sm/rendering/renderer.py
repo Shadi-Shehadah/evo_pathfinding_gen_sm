@@ -221,3 +221,69 @@ def render_flow_field(env, phenotype, resolution=30):
     ax.set_aspect('equal')
     ax.set_title("Flow Field")
     plt.show()
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+
+
+def render_fitness_graph(generations, title="Fitness Over Generations", fitness_offset=0):
+    """
+    Plots the best fitness line, the fitness range, and individual candidate points.
+    """
+    if not generations:
+        print("No generations to plot.")
+        return
+
+    # 1. Extract Summary Data
+    gen_indices = np.arange(len(generations))
+    best_fitnesses = []
+    worst_fitnesses = []
+    
+    # 2. Extract Individual Data for Scatter Plot
+    all_x = [] # Generation indices
+    all_y = [] # Fitness scores
+
+    for i, gen in enumerate(generations):
+        scores = [p.fitness + fitness_offset for p in gen.phenotypes]
+        
+        if scores:
+            best_fitnesses.append(max(scores))
+            worst_fitnesses.append(min(scores))
+            
+            # Add every individual score to the scatter lists
+            all_x.extend([i] * len(scores))
+            all_y.extend(scores)
+        else:
+            best_fitnesses.append(0)
+            worst_fitnesses.append(0)
+
+    # 3. Setup Plot
+    plt.figure(figsize=(12, 7)) # Made it slightly wider for detail
+
+    # 4. Plot 'Range' (Shaded Area)
+    plt.fill_between(gen_indices, worst_fitnesses, best_fitnesses, 
+                     color='gray', alpha=0.2, label='Fitness Range')
+
+    # 5. Plot Individual Candidates (The new feature)
+    # 'alpha' makes them transparent so you can see overlapping points
+    # 's' is size (small dots)
+    # 'zorder' ensures they appear on top of the shading but below the line
+    plt.scatter(all_x, all_y, c='blue', alpha=0.3, s=10, label='Candidates', zorder=2)
+
+    # 6. Plot 'Best Fitness' Line
+    plt.plot(gen_indices, best_fitnesses, 
+             color='black', linewidth=2, label='Best Fitness', zorder=3)
+
+    # 7. Formatting
+    plt.title(title, fontsize=16)
+    plt.xlabel("Generation", fontsize=12)
+    plt.ylabel("Fitness", fontsize=12)
+    plt.legend(loc='lower right') # Moved legend to avoid covering early data
+    plt.grid(True, linestyle='--', alpha=0.5)
+    
+    plt.xticks(np.arange(0, len(generations), step=max(1, len(generations)//10)))
+
+    plt.tight_layout()
+    plt.show()
+

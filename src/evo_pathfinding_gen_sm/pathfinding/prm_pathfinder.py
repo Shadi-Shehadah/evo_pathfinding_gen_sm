@@ -11,7 +11,7 @@ with open("../config/config.yaml",'r') as f:
     cfg = yaml.load(f, Loader=yaml.FullLoader)
 design_rules = cfg['design_rules']
 material_properties = cfg['material_properties']
-prm_cfg = cfg['prm']
+pathfinding_cfg = cfg['prm']
 rng = np.random.default_rng()
 
 
@@ -30,14 +30,15 @@ class PRMPathfinder:
 
         self.sheet_thickness = material_properties['thickness']
 
-        self.genotype_sensitivity = prm_cfg['genotype_sensitivity']
-        self.bend_weight = prm_cfg['prm_bend_weight']
-        self.genetic_weight = prm_cfg['prm_genetic_weight']
+        self.genotype_sensitivity = pathfinding_cfg['genotype_sensitivity']
+        self.bend_weight = pathfinding_cfg['bend_weight']
+        self.genetic_weight = pathfinding_cfg['genetic_weight']
+        self.node_count = pathfinding_cfg['node_count']
 
 
-        # Heap must store tuples: (f_score, node)
+
         self.open_set = [] 
-        self.closed_set = set() # Use a set for O(1) lookups
+        self.closed_set = set()
 
 
 
@@ -240,8 +241,41 @@ class PRMPathfinder:
         
         # 2. Parental Alignment cost:
         genetic_cost = 0
-        if genotype:
-            genetic_cost = 1  #WIP
+
+        if genotype is not None and hasattr(genotype, 'vector_field'):
+                # A. Calculate Move Vector (Normalized)
+                move_vec = np.array([neighbor.x - current.x, neighbor.y - current.y])
+                move_len = np.linalg.norm(move_vec)
+                
+                if move_len > 0:
+                    move_dir = move_vec / move_len
+                    
+                    # B. Get Field Vector at Current Location
+                    # Assuming vector_field is accessible by grid coordinates [y][x] or similar
+                    # We cast to int because grid indices must be integers
+                    try:
+                        ix, iy = int(current.x), int(current.y)
+                        # Shape check to prevent index errors
+                        if 0 <= iy < genotype.vector_field.shape[0] and 0 <= ix < genotype.vector_field.shape[1]:
+                            field_vec = genotype.vector_field[iy, ix] # Get vector (dx, dy)
+                            
+                            # Normalize field vector (if not already)
+                            field_len = np.linalg.norm(field_vec)
+                            
+                            if field_len > 0:
+                                field_dir = field_vec / field_len
+                                
+                                # C. Calculate Alignment (Dot Product)
+                                # 1.0 = Perfectly Aligned, -1.0 = Opposite, 0.0 = Perpendicular
+                                alignment = np.dot(move_dir, field_dir)
+                                
+                                # D. Convert to Cost
+                                # We want alignment (1.0) to be cheap (0.0 cost)
+                                # We want misalignment (-1.0) to be expensive (2.0 cost)
+                                # Formula: Cost = (1.0 - Alignment) / 2.0  -> Range [0.0, 1.0]
+                                genetic_cost = (1.0 - alignment) * dist # Scale by distance traveled
+                    except Exception as e:
+                        pass
 
 
         # 3. Bend Cost
@@ -368,6 +402,10 @@ class PRMPathfinder:
         self.path = []
 
     def get_phenotype_from_genotype(self, genotype: Genotype):
-        self.build_roadmap(node_count=100, genotype=genotype)
+        node_count=self.node_count
+        self.build_roadmap(node_count=node_count, genotype=genotype)
         self.find_path(self.start_point, self.target_point, parent_genotype=genotype)
+        if not self.path or len(self.path) < 2:
+            return None
+        
         return Phenotype(self.environment, self.path)
